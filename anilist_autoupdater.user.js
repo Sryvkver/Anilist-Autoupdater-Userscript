@@ -2,8 +2,10 @@
 // @name         Auto Update anilist
 // @namespace    http://tampermonkey.net/
 // @version      0.1
-// @description  Currently supports Proxer, Crunchyroll
-// @author       You
+// @description  Automatacally updates your Anilist entries, when a certain thresohold of an episode has been watched.
+// @author       felixire
+// @updateURL    https://github.com/felixire/Anilist-Autoupdater-Userscript/raw/master/anilist_autoupdater.user.js
+// @source       https://github.com/felixire/Anilist-Autoupdater-Userscript
 // @match        https://proxer.me/watch/*/*/*
 // @match        https://www.crunchyroll.com/*/*
 // @match        https://stream.proxer.me/*
@@ -432,6 +434,7 @@ class Anilist {
         this.auth_code = GM_getValue('authkey', null);
         this.animeProvider = animeProvider;
         this.idPrompt = false;
+        this.askingForAuthentication = false;
 
         if (this.auth_code == null)
             (async () => {
@@ -451,15 +454,21 @@ class Anilist {
 
     authenticate() {
         return new Promise((res, rej) => {
+            this.askingForAuthentication = true;
             window.open('https://anilist.co/api/v2/oauth/authorize?client_id=3335&response_type=token', '_blank');
             this.auth_code = prompt('Please enter your code.');
             GM_setValue('authkey', this.auth_code);
             res(this.auth_code);
+            this.askingForAuthentication = false;
         })
     }
 
     getUserid() {
         return new Promise(async (res, rej) => {
+            while(this.askingForAuthentication){
+                await wait(20);
+            }
+            
             if (this.user_id != null) {
                 res(this.user_id);
                 return;
@@ -479,8 +488,24 @@ class Anilist {
                 variables
             }
 
-            let response = await this.sendRequest(data);
-            let id = response.data.Viewer.id || null;
+            let response = await this.sendRequest(data).catch(err => {
+                rej(err);
+                return;
+            });
+            
+            //if for some reason the catch didnt fire this check should trigger when it did fail
+            if(response == undefined){
+                rej("WAS NOT ABLE TO FETCH ID");
+                return;
+            }
+            
+            let id = response.Viewer.id || null;
+            
+            if(id == null){
+                rej("WAS NOT ABLE TO FETCH ID");
+                return;
+            }
+            
             res(id);
         });
     }
@@ -925,7 +950,7 @@ async function main(){
                 return;
             }
         }else{
-            utils.log("Animeinfo still empty", animeInfo);
+            //utils.log("Animeinfo still empty", animeInfo);
             await wait(5);
             update();
             return;
@@ -949,7 +974,7 @@ async function main(){
             //return;
 
             let status = animeInfo.episode === animeInfo.episodeCount ? MediaStatus.COMPLETED : animeInfo.repeats > 0 ? MediaStatus.REPEATING : MediaStatus.CURRENT;
-            utils.log("UPDATING!!!");
+            utils.log("UPDATING!!!", animeInfo);
             anilist.updateMediaEntry(animeInfo.name + (animeInfo.season > 1 ? ` part ${animeInfo.season}` : ""), animeInfo.episode, status, animeInfo.repeats, MediaType.ANIME).catch(err => {
                 hasUpdated = false;
                 utils.error(err);
