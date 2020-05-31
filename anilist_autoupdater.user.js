@@ -7,6 +7,7 @@
 // @match        https://proxer.me/watch/*/*/*
 // @match        https://www.crunchyroll.com/*/*
 // @match        https://stream.proxer.me/*
+// @match        https://www.wakanim.tv/de/v2/catalogue/episode/*
 // @require      https://raw.githubusercontent.com/sizzlemctwizzle/GM_config/a4a49b47ecfb1d8fcd27049cc0e8114d05522a0f/gm_config.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -355,13 +356,70 @@ class Crunchyroll extends AnimeProvider {
     }
 }
 
-const SUPPORTED_WEBSITES = [ProxerAnime, ProxerManga, ProxerIframe, Crunchyroll];
+class Wakanim extends AnimeProvider {
+    constructor() {
+        super('Anime_Wakanim');
+        this.__HREF__ = ['www.wakanim.tv'];
+        //this.storageId = 'Anime_Crunchyroll';
+        //this.anime_list = JSON.parse(GM_getValue(this.storageId, '{}'));
+    }
+
+    getName() {
+        return new Promise(async (res, rej) => {
+            await waitForElement(".episode_info .border-list").catch(err => {
+                rej(err);
+            }).then(parentEle => {
+                let nameParent = parentEle[0].children[0];
+                let nameEle = nameParent.querySelector('.border-list_text');
+                let nameStr = nameEle.innerText.trim();
+                res(nameStr);
+            });
+        })
+    }
+
+    getEpisode() {
+        return new Promise(async (res, rej) => {
+            await waitForElement(".episode_subtitle > span > span").catch(err => {
+                rej(err);
+            }).then(episodeEle => {
+                let epiStr = episodeEle[0].innerText;
+                res(parseInt(epiStr));
+            });
+        })
+    }
+
+    getCurrentTime() {
+        return new Promise(async (res, rej) => {
+            if (unsafeWindow.player2 == null || unsafeWindow.player2 == undefined) {
+                res(0);
+                return;
+            }
+            let time = unsafeWindow.player2.getCurrentTime();
+            res(time);
+        })
+    }
+
+    getDuration() {
+        return new Promise(async (res, rej) => {
+            if (unsafeWindow.player2 == null || unsafeWindow.player2 == undefined) {
+                res(-1);
+                return;
+            }
+            let duration = unsafeWindow.player2.getDuration();
+            res(duration);
+        })
+    }
+}
+
+
+const SUPPORTED_WEBSITES = [ProxerAnime, ProxerManga, ProxerIframe, Crunchyroll, Wakanim];
 
 //#endregion
 
 
 /**
  * !TODO add manga support
+ * !TODO make the prompt pretty
  */
 
 class Anilist {
@@ -468,7 +526,11 @@ class Anilist {
                 return;
             });
 
-            utils.log(response);
+            //if for some reason the catch didnt fire this check should trigger when it did fail
+            if(response == undefined){
+                res(-1);
+                return;
+            }
 
             let progress = response.MediaList.progress;
 
@@ -516,6 +578,12 @@ class Anilist {
                 return;
             });
 
+            //if for some reason the catch didnt fire this check should trigger when it did fail
+            if(response == undefined){
+                res(Infinity);
+                return;
+            }
+
             let progress = response.Media.episodes;
 
             res(progress);
@@ -531,7 +599,10 @@ class Anilist {
                 this.user_id = await this.getUserid();
             }
 
-            let idOfAnime = await this.getId(animeName);
+            let idOfAnime = await this.getId(animeName).catch((err) => {
+                rej(err);
+                return;
+            });
 
             let query = `
             query($id: Int, $userId: Int) {
@@ -559,6 +630,13 @@ class Anilist {
                 rej(errors);
                 return;
             });
+
+            //if for some reason the catch didnt fire this check should trigger when it did fail
+            if(response == undefined){
+                res(0);
+                return;
+            }
+
             let repeats = response.MediaList.repeat;
 
             res(repeats);
@@ -575,6 +653,7 @@ class Anilist {
             }
 
             if (!!this.animeProvider.hasId(animeName)) {
+                //CHANGE THE FRICKING FUNCTION NAME!!!!
                 res(this.animeProvider.getId(animeName));
                 return;
             }
@@ -613,6 +692,11 @@ class Anilist {
 
             let sel = prompt(string);
 
+            //User pressed cancel
+            if(sel == null){
+                rej("User canceld!");
+            }
+
             if (sel == '')
                 sel = '0';
 
@@ -630,14 +714,20 @@ class Anilist {
         return new Promise(async (res, rej) => {
             if(!this.idPrompt){
                 this.idPrompt = true;
-                let id = await (this.getIdWait(animeName, type));
+                let id = await (this.getIdWait(animeName, type)).catch((err) => {
+                    rej(err);
+                    return;
+                });
                 res(id);
                 this.idPrompt = false;
             }else{
                 while(this.idPrompt){
                     await wait(100);
                 }
-                let id = await (this.getIdWait(animeName, type));
+                let id = await (this.getIdWait(animeName, type)).catch((err) => {
+                    rej(err);
+                    return;
+                });
                 res(id);
             }
         })
@@ -651,7 +741,7 @@ class Anilist {
      * @param {MediaType} type
      */
 
-    updateMediaEntry(name, progress, status, type){
+    updateMediaEntry(name, progress, status, repeats, type){
         return new Promise(async (res, rej) => {
             if (this.auth_code == null) {
                 this.auth_code = await this.authenticate();
@@ -660,17 +750,21 @@ class Anilist {
                 this.user_id = await this.getUserid();
             }
 
-            let idOfAnime = await this.getId(name);
+            let idOfAnime = await this.getId(name).catch((err) => {
+                rej(err);
+                return;
+            });
 
             let query = `
-            mutation($mediaId: Int, $episode: Int, $volume: Int, $status: MediaListStatus) {
-                SaveMediaListEntry(mediaId: $mediaId, progress: $episode, progressVolumes: $volume, status: $status){
+            mutation($mediaId: Int, $episode: Int, $volume: Int, $repeats: Int, $status: MediaListStatus) {
+                SaveMediaListEntry(mediaId: $mediaId, progress: $episode, progressVolumes: $volume, status: $status, repeat: $repeats){
                     progress
                 }
             }`;
 
             let variables = {
                 mediaId: idOfAnime,
+                repeats: repeats,
                 status: status
             }
 
@@ -788,7 +882,44 @@ async function main(){
 
     let update = async(sleep=5) => {
         await wait(sleep);
+
+        //Check if the Anime is split
         if(!hasNull(animeInfo)){
+            if(animeInfo.episode > animeInfo.episodeCount){
+                animeInfo.season++;
+                animeInfo.episode -= animeInfo.episodeCount;
+                animeInfo.episodeCount = null;
+
+                anilist.getId(animeInfo.name + ' part ' + animeInfo.season).then(() => {
+                    anilist.getProgress(animeInfo.name + ' part ' + animeInfo.season).then(progress => animeInfo.progress = progress);
+                    anilist.getEpisodeCountOfAnime(animeInfo.name + ' part ' + animeInfo.season).then(count => animeInfo.episodeCount = count);
+                    anilist.getRepeatsOfAnime(animeInfo.name + ' part ' + animeInfo.season).then(repeats => animeInfo.repeats = repeats);
+                }).catch((err) => {
+                    utils.error(err);
+                    return;
+                })
+
+                update(1000);
+                return;
+            }
+        }
+
+        if(!hasNull(animeInfo)){
+            //!TODO - Split the progress to its own class, because animeInfo sound weird in that context...
+            //Check if the Anime was previosly completed and if the current watched episode is the first one > if yes then ask if the user wants to flag as rewatching
+            if(animeInfo.progress === animeInfo.episodeCount && animeInfo.episode == 1){
+                if(confirm("Mark anime as repeating?")){
+                    //Repeating
+                    utils.log("Repeating anime!");
+                    animeInfo.progress = -1;
+                    animeInfo.repeats++;
+                }else{
+                    utils.log("Anime has been completed before, and user did not want to repeat!");
+                    return;
+                }
+            }
+
+
             if(animeInfo.progress === animeInfo.episode || (!GM_config.get('Update_old') && animeInfo.episode < animeInfo.progress)){
                 utils.log("Current episode is same or smaller as progress aborting!");
                 return;
@@ -808,23 +939,6 @@ async function main(){
 
         utils.debug(perc);
 
-        if(!hasNull(animeInfo)){
-            if(animeInfo.episode > animeInfo.episodeCount){
-                animeInfo.season++;
-                animeInfo.episode -= animeInfo.episodeCount;
-                animeInfo.episodeCount = null;
-
-                anilist.getId(animeInfo.name + ' part ' + animeInfo.season).then(() => {
-                    anilist.getProgress(animeInfo.name + ' part ' + animeInfo.season).then(progress => animeInfo.progress = progress);
-                    anilist.getEpisodeCountOfAnime(animeInfo.name + ' part ' + animeInfo.season).then(count => animeInfo.episodeCount = count);
-                    anilist.getRepeatsOfAnime(animeInfo.name + ' part ' + animeInfo.season).then(repeats => animeInfo.repeats = repeats);
-                })
-
-                update(1000);
-                return;
-            }
-        }
-
 
         if(!isNaN(perc) && perc >= GM_config.get('Watch_Time') && !hasUpdated && !hasNull(animeInfo)){
             hasUpdated = true;
@@ -836,7 +950,7 @@ async function main(){
 
             let status = animeInfo.episode === animeInfo.episodeCount ? MediaStatus.COMPLETED : animeInfo.repeats > 0 ? MediaStatus.REPEATING : MediaStatus.CURRENT;
             utils.log("UPDATING!!!");
-            anilist.updateMediaEntry(animeInfo.name + (animeInfo.season > 1 ? ` part ${animeInfo.season}` : ""), animeInfo.episode, status, MediaType.ANIME).catch(err => {
+            anilist.updateMediaEntry(animeInfo.name + (animeInfo.season > 1 ? ` part ${animeInfo.season}` : ""), animeInfo.episode, status, animeInfo.repeats, MediaType.ANIME).catch(err => {
                 hasUpdated = false;
                 utils.error(err);
                 update();
