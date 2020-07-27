@@ -41,6 +41,8 @@
 //#endregion
 
 //#region Constants
+const __IS_DEBUG__ = false;
+
 const ProviderType = {
     ANIME: 'ANIME',
     MANGA: 'MANGA'
@@ -1025,13 +1027,15 @@ async function main(){
 
             let status = animeInfo.episode === animeInfo.episodeCount ? MediaStatus.COMPLETED : animeInfo.repeats > 0 ? MediaStatus.REPEATING : MediaStatus.CURRENT;
             utils.log("UPDATING!!!", animeInfo);
-            //anilist.updateMediaEntry(animeInfo.name + (animeInfo.season > 1 ? ` part ${animeInfo.season}` : ""), animeInfo.episode, status, animeInfo.repeats, MediaType.ANIME).catch(err => {
-            //    hasUpdated = false;
-            //    utils.error(err);
-            //    update();
-            //}).then(() => {
-            //    utils.log("Updated anilist entry!");
-            //})
+            if(__IS_DEBUG__) return;
+
+            anilist.updateMediaEntry(animeInfo.name + (animeInfo.season > 1 ? ` part ${animeInfo.season}` : ""), animeInfo.episode, status, animeInfo.repeats, MediaType.ANIME).catch(err => {
+                hasUpdated = false;
+                utils.error(err);
+                update();
+            }).then(() => {
+                utils.log("Updated anilist entry!");
+            })
             return;
         }
 
